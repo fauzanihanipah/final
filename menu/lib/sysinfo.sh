@@ -268,9 +268,28 @@ SYS_SERVICES=(SSH DROPBEAR STUNNEL5 XRAY NGINX BADVPN SLOWDNS FAIL2BAN)
 # Lookup a unit name from a label.
 sys_service_unit() {
     case "$1" in
-        SSH)       echo ssh ;;
+        SSH)
+            # Debian/Ubuntu use 'ssh', RHEL family uses 'sshd'.
+            if systemctl list-unit-files 2>/dev/null | grep -q '^ssh\.service'; then
+                echo ssh
+            elif systemctl list-unit-files 2>/dev/null | grep -q '^sshd\.service'; then
+                echo sshd
+            else
+                echo ssh
+            fi
+            ;;
         DROPBEAR)  echo dropbear ;;
-        STUNNEL5)  echo stunnel5 ;;
+        STUNNEL5)
+            # The installer creates an alias unit 'stunnel5.service'; if it's
+            # missing fall back to the distro's actual unit name.
+            if systemctl list-unit-files 2>/dev/null | grep -q '^stunnel5\.service'; then
+                echo stunnel5
+            elif systemctl list-unit-files 2>/dev/null | grep -q '^stunnel4\.service'; then
+                echo stunnel4
+            else
+                echo stunnel
+            fi
+            ;;
         XRAY)      echo xray ;;
         NGINX)     echo nginx ;;
         BADVPN)    echo badvpn ;;
