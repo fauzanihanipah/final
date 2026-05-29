@@ -56,17 +56,41 @@ EOF
 
     # Disable the stock default site so it doesn't conflict on :80.
     [[ -f /etc/nginx/sites-enabled/default ]] && rm -f /etc/nginx/sites-enabled/default
+    [[ -f /etc/nginx/conf.d/default.conf ]]   && mv /etc/nginx/conf.d/default.conf /etc/nginx/conf.d/default.conf.dewa-disabled
 
     # Make sure /var/www/html exists (used both as default root AND as the
     # ACME webroot for cert.sh's Let's Encrypt validation).
     mkdir -p /var/www/html/.well-known/acme-challenge
     [[ -f /var/www/html/index.html ]] || echo '<h1>DEWA TUNNELING PANEL</h1>' > /var/www/html/index.html
 
+    # If something else (commonly a stale apache2, or dropbear from a
+    # previous install where it was bound to 80) is squatting on port
+    # 80 or 443, log it loudly so the user can debug.
+    local hog
+    if command -v ss >/dev/null 2>&1; then
+        for port in 80 443; do
+            hog=$(ss -tlnp 2>/dev/null | awk -v p=":${port}\$" '$4 ~ p {print $0}')
+            if [[ -n "$hog" ]]; then
+                inst_log "WARN: port ${port} already in use BEFORE nginx start: $hog"
+            fi
+        done
+    fi
+
     if ! inst_run nginx -t; then
-        inst_log "nginx config test failed — see $INSTALL_LOG"
+        inst_log "nginx config test failed — full nginx -t output follows:"
+        nginx -t >> "$INSTALL_LOG" 2>&1 || true
         return 1
     fi
     inst_systemd_enable nginx
     inst_firewall_open 80 443
-    inst_is_active nginx
+
+    # Confirm nginx really is listening — if not, dump systemd state to
+    # the log so post-mortem is easy.
+    if ! inst_is_active nginx; then
+        inst_log "nginx failed to start — systemctl status:"
+        systemctl status nginx --no-pager >> "$INSTALL_LOG" 2>&1 || true
+        journalctl -u nginx -n 50 --no-pager >> "$INSTALL_LOG" 2>&1 || true
+        return 1
+    fi
+    return 0
 }

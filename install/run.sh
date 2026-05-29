@@ -104,5 +104,12 @@ dewa_run_all_services() {
 
     inst_log "summary: ok=$ok warn=$warn fail=$fail"
 
+    # If anything failed, point the user at the install log.
+    if (( fail > 0 )); then
+        ui_blank
+        ui_notify_warning "Some services did not start. Inspect: tail -100 ${INSTALL_LOG:-/var/log/dewa-install.log}"
+        ui_notify_info    "Run 'dewa-doctor' anytime for a quick health check."
+    fi
+
     return 0
 }

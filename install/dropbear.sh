@@ -9,9 +9,12 @@ dewa_install_dropbear() {
     inst_backup_once /etc/default/dropbear
     inst_write_file /etc/default/dropbear 0644 <<'EOF'
 # Managed by DEWA TUNNELING PANEL
+# Note: ports 80 and 443 are intentionally NOT used here — those belong
+# to nginx (ACME on 80, TLS termination on 443).  Dropbear keeps a small
+# spread on 109/143 plus a high port for redundancy.
 NO_START=0
 DROPBEAR_PORT=109
-DROPBEAR_EXTRA_ARGS="-p 143 -p 80"
+DROPBEAR_EXTRA_ARGS="-p 143 -p 1443"
 DROPBEAR_BANNER=""
 DROPBEAR_RECEIVE_WINDOW=65536
 EOF
@@ -26,6 +29,6 @@ EOF
     fi
 
     inst_systemd_enable dropbear
-    inst_firewall_open 109 143 80
+    inst_firewall_open 109 143 1443
     inst_is_active dropbear
 }

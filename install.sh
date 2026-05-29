@@ -190,6 +190,13 @@ EOF
 exec bash "${INSTALL_DIR}/install/cert.sh" renew "\$@"
 EOF
     chmod +x "${BIN_DIR}/renew-cert"
+
+    # dewa-doctor — quick health check.
+    cat > "${BIN_DIR}/dewa-doctor" <<EOF
+#!/usr/bin/env bash
+exec bash "${INSTALL_DIR}/install/doctor.sh" "\$@"
+EOF
+    chmod +x "${BIN_DIR}/dewa-doctor"
 }
 
 install_bin_backend() {

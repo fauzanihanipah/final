@@ -309,7 +309,7 @@ __si_ports_default() {
         SSH_SSL)      echo "443" ;;
         SSH_WS_TLS)   echo "443" ;;
         SSH_WS_NTLS)  echo "8880" ;;
-        DROPBEAR)     echo "109, 143, 443" ;;
+        DROPBEAR)     echo "109, 143, 1443" ;;
         BADVPN)       echo "7100, 7200, 7300" ;;
         VMESS_TLS)    echo "443" ;;
         VLESS_TLS)    echo "443" ;;

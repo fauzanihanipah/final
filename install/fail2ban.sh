@@ -19,7 +19,7 @@ enabled = true
 
 [dropbear]
 enabled = true
-port    = 109,143,80
+port    = 109,143,1443
 EOF
 
     inst_systemd_enable fail2ban
