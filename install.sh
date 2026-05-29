@@ -129,11 +129,14 @@ ensure_deps() {
 copy_panel() {
     mkdir -p "$INSTALL_DIR"
     # Remove any old menu/ so re-running the installer always lands clean.
-    rm -rf "${INSTALL_DIR}/menu"
+    rm -rf "${INSTALL_DIR}/menu" "${INSTALL_DIR}/install"
     cp -r "${SRC_DIR}/menu" "${INSTALL_DIR}/"
+    [[ -d "${SRC_DIR}/install" ]] && cp -r "${SRC_DIR}/install" "${INSTALL_DIR}/"
     cp    "${SRC_DIR}/install.sh" "${INSTALL_DIR}/" 2>/dev/null || true
     chmod -R 0755 "${INSTALL_DIR}/menu"
+    [[ -d "${INSTALL_DIR}/install" ]] && chmod -R 0755 "${INSTALL_DIR}/install"
     find "${INSTALL_DIR}/menu" -name '*.sh' -exec chmod +x {} +
+    [[ -d "${INSTALL_DIR}/install" ]] && find "${INSTALL_DIR}/install" -name '*.sh' -exec chmod +x {} +
 }
 
 install_wrappers() {
@@ -214,8 +217,18 @@ main() {
     ui_blank
 
     step "Installing dependencies"   10 ; ensure_deps
-    step "Copying panel files"       40 ; copy_panel
-    step "Installing CLI wrappers"   65 ; install_wrappers
+    step "Copying panel files"       30 ; copy_panel
+    step "Installing CLI wrappers"   45 ; install_wrappers
+
+    # ---- Install all backend services (xray, dropbear, stunnel, …) ----
+    # shellcheck source=install/run.sh
+    if [[ -f "${SRC_DIR}/install/run.sh" ]]; then
+        ui_blank
+        source "${SRC_DIR}/install/run.sh"
+        dewa_run_all_services
+        ui_blank
+    fi
+
     step "Fetching bin backend"      85 ; install_bin_backend
     step "Finalising installation"  100
     ui_progress_done "Panel installation complete"
