@@ -2,30 +2,100 @@
 # ============================================================
 #  DEWA TUNNELING PANEL — Installer
 #  ----------------------------------------------------------
-#  - Verifies system requirements
-#  - Copies the panel to /opt/dewa-panel
-#  - Installs CLI wrappers into /usr/local/sbin
-#  - Optionally pulls the bin backend from chanelog/bin
-#  Exits non-zero on fatal errors and prints a styled summary.
+#  Works in three invocation modes:
+#    1.  bash install.sh                  (run from a clone)
+#    2.  bash <(curl -fsSL …/install.sh)  (process substitution)
+#    3.  curl -fsSL … | bash              (piped to bash)
+#
+#  In modes 2 and 3 the script lives in /dev/fd/* or stdin, so the
+#  adjacent menu/ directory is not available. The bootstrap block
+#  below detects this and clones the repo to a temp dir before the
+#  UI library is sourced.
 # ============================================================
 
 set -u
 
-SRC_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+# ------------------------------------------------------------
+#  Bootstrap (no UI library yet — use plain output only)
+# ------------------------------------------------------------
+__boot_die() {
+    printf '\033[1;31m✘ ERROR\033[0m  %s\n' "$*" >&2
+    exit 1
+}
+__boot_info() {
+    printf '\033[1;36mℹ INFO\033[0m   %s\n' "$*"
+}
+
+# Root check happens early because both the bootstrap (apt install git)
+# and the install itself require root privileges.
+if [[ "${EUID:-$(id -u)}" -ne 0 ]]; then
+    __boot_die "This installer must be run as root. Try: sudo bash install.sh"
+fi
+
+__BOOTSTRAPPED=0
+__detect_src_dir() {
+    local self="${BASH_SOURCE[0]}"
+    local dir=""
+    if [[ -n "$self" ]]; then
+        dir="$( cd "$( dirname "$self" )" 2>/dev/null && pwd )" || dir=""
+    fi
+    # Happy path: we're running from a checkout that already contains menu/.
+    if [[ -n "$dir" && -d "$dir/menu" && -f "$dir/menu/lib/ui.sh" ]]; then
+        printf '%s' "$dir"
+        return
+    fi
+
+    # Bootstrap path: install git if missing, then clone the repo.
+    __boot_info "Installer running without local files — bootstrapping from GitHub…" >&2
+
+    if ! command -v git >/dev/null 2>&1; then
+        if command -v apt-get >/dev/null 2>&1; then
+            DEBIAN_FRONTEND=noninteractive apt-get -qq update >/dev/null 2>&1 || true
+            DEBIAN_FRONTEND=noninteractive apt-get -y -qq install git ca-certificates curl >/dev/null 2>&1 || true
+        elif command -v dnf >/dev/null 2>&1; then
+            dnf install -y git ca-certificates curl >/dev/null 2>&1 || true
+        elif command -v yum >/dev/null 2>&1; then
+            yum install -y git ca-certificates curl >/dev/null 2>&1 || true
+        elif command -v apk >/dev/null 2>&1; then
+            apk add --no-cache git ca-certificates curl >/dev/null 2>&1 || true
+        fi
+    fi
+    command -v git >/dev/null 2>&1 \
+        || __boot_die "git is required to bootstrap but could not be installed automatically."
+
+    local repo="${DEWA_REPO:-https://github.com/fauzanihanipah/final}"
+    local branch="${DEWA_BRANCH:-main}"
+    local tmp
+    tmp=$(mktemp -d -t dewa-panel.XXXXXX) \
+        || __boot_die "could not create temporary directory"
+
+    if ! git clone --depth 1 -b "$branch" "$repo" "$tmp" >/dev/null 2>&1; then
+        rm -rf "$tmp"
+        __boot_die "failed to clone $repo (branch: $branch)"
+    fi
+    if [[ ! -f "$tmp/menu/lib/ui.sh" ]]; then
+        rm -rf "$tmp"
+        __boot_die "cloned repository does not contain menu/lib/ui.sh"
+    fi
+    __BOOTSTRAPPED=1
+    printf '%s' "$tmp"
+}
+
+SRC_DIR="$(__detect_src_dir)"
 INSTALL_DIR="/opt/dewa-panel"
 BIN_DIR="/usr/local/sbin"
 BIN_REPO_URL="https://github.com/chanelog/bin"
 
+# Clean up bootstrap clone on exit (success or failure).
+trap '[[ "${__BOOTSTRAPPED:-0}" == "1" && -n "${SRC_DIR:-}" && "$SRC_DIR" == /tmp/* ]] && rm -rf "$SRC_DIR"' EXIT
+
+# Now that SRC_DIR is guaranteed valid, source the UI library.
 # shellcheck source=menu/lib/ui.sh
 source "${SRC_DIR}/menu/lib/ui.sh"
 
-require_root() {
-    if [[ "${EUID:-$(id -u)}" -ne 0 ]]; then
-        ui_notify_error "This installer must be run as root (try: sudo bash install.sh)."
-        exit 1
-    fi
-}
-
+# ------------------------------------------------------------
+#  Installer steps (use the styled UI library from here on)
+# ------------------------------------------------------------
 step() {
     local label="$1" pct="$2"
     ui_progress_set "$label" "$pct"
@@ -49,11 +119,17 @@ ensure_deps() {
     if command -v apt-get >/dev/null 2>&1; then
         DEBIAN_FRONTEND=noninteractive apt-get -qq update >/dev/null 2>&1 || true
         DEBIAN_FRONTEND=noninteractive apt-get -y -qq install "${pkgs[@]}" >/dev/null 2>&1 || true
+    elif command -v dnf >/dev/null 2>&1; then
+        dnf install -y "${pkgs[@]}" >/dev/null 2>&1 || true
+    elif command -v yum >/dev/null 2>&1; then
+        yum install -y "${pkgs[@]}" >/dev/null 2>&1 || true
     fi
 }
 
 copy_panel() {
     mkdir -p "$INSTALL_DIR"
+    # Remove any old menu/ so re-running the installer always lands clean.
+    rm -rf "${INSTALL_DIR}/menu"
     cp -r "${SRC_DIR}/menu" "${INSTALL_DIR}/"
     cp    "${SRC_DIR}/install.sh" "${INSTALL_DIR}/" 2>/dev/null || true
     chmod -R 0755 "${INSTALL_DIR}/menu"
@@ -70,7 +146,7 @@ EOF
     chmod +x "${BIN_DIR}/menu"
 
     # Convenience aliases for each submenu.
-    local pair
+    local pair name file
     for pair in \
         "m-ssh:ssh.sh" \
         "m-vmess:vmess.sh" \
@@ -81,7 +157,8 @@ EOF
         "m-system:system.sh" \
         "m-admin:admin.sh" \
         "m-update:update.sh" ; do
-        local name="${pair%%:*}" file="${pair##*:}"
+        name="${pair%%:*}"
+        file="${pair##*:}"
         cat > "${BIN_DIR}/${name}" <<EOF
 #!/usr/bin/env bash
 exec bash "${INSTALL_DIR}/menu/${file}" "\$@"
@@ -120,13 +197,16 @@ main() {
     ui_header "DEWA TUNNELING PANEL v5" "INSTALLER · ENTERPRISE EDITION"
     ui_blank
 
-    require_root
+    if (( __BOOTSTRAPPED == 1 )); then
+        ui_notify_info "Bootstrapped from GitHub into ${SRC_DIR}"
+        ui_blank
+    fi
 
     ui_card_top "PRE-FLIGHT CHECK"
-    ui_card_kv "Source"      "$SRC_DIR"
-    ui_card_kv "Target"      "$INSTALL_DIR"
-    ui_card_kv "Wrappers"    "$BIN_DIR"
-    ui_card_kv "Bin Repo"    "$BIN_REPO_URL"
+    ui_card_kv "Source"      "$SRC_DIR"      12
+    ui_card_kv "Target"      "$INSTALL_DIR"  12
+    ui_card_kv "Wrappers"    "$BIN_DIR"      12
+    ui_card_kv "Bin Repo"    "$BIN_REPO_URL" 12
     ui_card_bottom
     ui_blank
 
@@ -142,14 +222,14 @@ main() {
     ui_blank
 
     ui_card_top "INSTALL SUMMARY"
-    ui_card_kv "Launch Command" "menu"
-    ui_card_kv "SSH Submenu"    "m-ssh"
-    ui_card_kv "VMESS Submenu"  "m-vmess"
-    ui_card_kv "VLESS Submenu"  "m-vless"
-    ui_card_kv "Trojan Submenu" "m-trojan"
-    ui_card_kv "System Submenu" "m-system"
-    ui_card_kv "Admin Submenu"  "m-admin"
-    ui_card_kv "Update Submenu" "m-update"
+    ui_card_kv "Launch Command" "menu"     16
+    ui_card_kv "SSH Submenu"    "m-ssh"    16
+    ui_card_kv "VMESS Submenu"  "m-vmess"  16
+    ui_card_kv "VLESS Submenu"  "m-vless"  16
+    ui_card_kv "Trojan Submenu" "m-trojan" 16
+    ui_card_kv "System Submenu" "m-system" 16
+    ui_card_kv "Admin Submenu"  "m-admin"  16
+    ui_card_kv "Update Submenu" "m-update" 16
     ui_card_bottom
     ui_blank
 
