@@ -168,6 +168,28 @@ exec bash "${INSTALL_DIR}/menu/${file}" "\$@"
 EOF
         chmod +x "${BIN_DIR}/${name}"
     done
+
+    # ---- Backend command wrappers -----------------------------------
+    # update-panel  — pulls latest from GitHub and re-runs install.sh.
+    cat > "${BIN_DIR}/update-panel" <<EOF
+#!/usr/bin/env bash
+exec bash "${INSTALL_DIR}/install/update.sh" "\$@"
+EOF
+    chmod +x "${BIN_DIR}/update-panel"
+
+    # change-domain — set/replace the panel's domain + Let's Encrypt cert.
+    cat > "${BIN_DIR}/change-domain" <<EOF
+#!/usr/bin/env bash
+exec bash "${INSTALL_DIR}/install/cert.sh" change "\$@"
+EOF
+    chmod +x "${BIN_DIR}/change-domain"
+
+    # renew-cert — renew the existing Let's Encrypt cert.
+    cat > "${BIN_DIR}/renew-cert" <<EOF
+#!/usr/bin/env bash
+exec bash "${INSTALL_DIR}/install/cert.sh" renew "\$@"
+EOF
+    chmod +x "${BIN_DIR}/renew-cert"
 }
 
 install_bin_backend() {
@@ -235,14 +257,17 @@ main() {
     ui_blank
 
     ui_card_top "INSTALL SUMMARY"
-    ui_card_kv "Launch Command" "menu"     16
-    ui_card_kv "SSH Submenu"    "m-ssh"    16
-    ui_card_kv "VMESS Submenu"  "m-vmess"  16
-    ui_card_kv "VLESS Submenu"  "m-vless"  16
-    ui_card_kv "Trojan Submenu" "m-trojan" 16
-    ui_card_kv "System Submenu" "m-system" 16
-    ui_card_kv "Admin Submenu"  "m-admin"  16
-    ui_card_kv "Update Submenu" "m-update" 16
+    ui_card_kv "Launch Panel"   "menu"          16
+    ui_card_kv "Update Panel"   "update-panel"  16
+    ui_card_kv "Change Domain"  "change-domain" 16
+    ui_card_kv "Renew TLS Cert" "renew-cert"    16
+    ui_card_kv "SSH Submenu"    "m-ssh"         16
+    ui_card_kv "VMESS Submenu"  "m-vmess"       16
+    ui_card_kv "VLESS Submenu"  "m-vless"       16
+    ui_card_kv "Trojan Submenu" "m-trojan"      16
+    ui_card_kv "System Submenu" "m-system"      16
+    ui_card_kv "Admin Submenu"  "m-admin"       16
+    ui_card_kv "Update Submenu" "m-update"      16
     ui_card_bottom
     ui_blank
 

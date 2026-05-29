@@ -17,7 +17,7 @@ __RUN_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 
 # shellcheck source=common.sh
 source "${__RUN_DIR}/common.sh"
-for f in bbr ipv6 ssh dropbear stunnel nginx xray badvpn slowdns fail2ban; do
+for f in bbr ipv6 ssh dropbear stunnel nginx xray badvpn slowdns fail2ban cert update; do
     # shellcheck disable=SC1090
     source "${__RUN_DIR}/${f}.sh"
 done
@@ -34,6 +34,7 @@ DEWA_SERVICES=(
     "BADVPN           |badvpn|dewa_install_badvpn"
     "FAIL2BAN         |fail2ban|dewa_install_fail2ban"
     "SLOWDNS          |slowdns|dewa_install_slowdns"
+    "DOMAIN / TLS     ||dewa_install_cert"
 )
 
 # Run all services and report progress via the UI library.

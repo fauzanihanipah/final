@@ -14,17 +14,28 @@ dewa_install_nginx() {
 
     inst_write_file /etc/nginx/conf.d/dewa.conf 0644 <<EOF
 # Managed by DEWA TUNNELING PANEL
+# Port 80 — ACME validation (/.well-known/acme-challenge/) + plain HTTP redirect
 server {
-    listen 81 default_server;
-    listen [::]:81 default_server;
+    listen 80 default_server;
+    listen [::]:80 default_server;
     server_name _;
     root /var/www/html;
     index index.html;
+
+    location ^~ /.well-known/acme-challenge/ {
+        default_type "text/plain";
+        root /var/www/html;
+    }
+    location / {
+        return 200 "DEWA TUNNELING PANEL\n";
+        add_header Content-Type text/plain;
+    }
 }
 
+# Port 443 — TLS termination + websocket reverse-proxy to Xray
 server {
-    listen 8443 ssl http2;
-    listen [::]:8443 ssl http2;
+    listen 443 ssl http2 default_server;
+    listen [::]:443 ssl http2 default_server;
     server_name _;
 
     ssl_certificate     ${crt};
@@ -46,8 +57,9 @@ EOF
     # Disable the stock default site so it doesn't conflict on :80.
     [[ -f /etc/nginx/sites-enabled/default ]] && rm -f /etc/nginx/sites-enabled/default
 
-    # Make sure /var/www/html exists (used as default root).
-    mkdir -p /var/www/html
+    # Make sure /var/www/html exists (used both as default root AND as the
+    # ACME webroot for cert.sh's Let's Encrypt validation).
+    mkdir -p /var/www/html/.well-known/acme-challenge
     [[ -f /var/www/html/index.html ]] || echo '<h1>DEWA TUNNELING PANEL</h1>' > /var/www/html/index.html
 
     if ! inst_run nginx -t; then
@@ -55,6 +67,6 @@ EOF
         return 1
     fi
     inst_systemd_enable nginx
-    inst_firewall_open 80 81 443 8443
+    inst_firewall_open 80 443
     inst_is_active nginx
 }
