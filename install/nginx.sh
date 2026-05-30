@@ -136,6 +136,28 @@ ${listen443_v6}
 }
 EOF
 
+    # ---- 4.5. AppArmor / capability sanity --------------------------
+    # Ubuntu ships nginx with an AppArmor profile that's normally fine,
+    # but on hosts that ran multiple panel installers the profile can
+    # be in a confused state. Switch nginx's profile to 'complain' so
+    # it logs but doesn't block, and grant CAP_NET_BIND_SERVICE so a
+    # non-root nginx (e.g. www-data) can still bind <1024.
+    if command -v aa-complain >/dev/null 2>&1 && [[ -e /etc/apparmor.d/usr.sbin.nginx ]]; then
+        aa-complain /etc/apparmor.d/usr.sbin.nginx >/dev/null 2>&1 || true
+    fi
+    if command -v setcap >/dev/null 2>&1 && [[ -x /usr/sbin/nginx ]]; then
+        setcap 'cap_net_bind_service=+ep' /usr/sbin/nginx 2>/dev/null || true
+    fi
+
+    # Disable the legacy /etc/init.d/stunnel4 helper if it lingers — it
+    # ships with the stunnel4 package and can SysV-restart leftover
+    # /etc/stunnel/*.conf files we don't manage.
+    if [[ -x /etc/init.d/stunnel4 ]]; then
+        /etc/init.d/stunnel4 stop >/dev/null 2>&1 || true
+        chmod -x /etc/init.d/stunnel4 || true
+        inst_log "disabled SysV init script /etc/init.d/stunnel4"
+    fi
+
     # ---- 5. Test config — fail loudly, on stdout AND in log ------
     if ! nginx -t >/tmp/_nginx_t.log 2>&1; then
         inst_log "nginx config test FAILED:"
