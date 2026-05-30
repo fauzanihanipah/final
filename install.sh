@@ -197,6 +197,13 @@ EOF
 exec bash "${INSTALL_DIR}/install/doctor.sh" "\$@"
 EOF
     chmod +x "${BIN_DIR}/dewa-doctor"
+
+    # dewa-cleanup — aggressive port + legacy-unit cleanup.
+    cat > "${BIN_DIR}/dewa-cleanup" <<EOF
+#!/usr/bin/env bash
+exec bash "${INSTALL_DIR}/install/cleanup.sh" "\$@"
+EOF
+    chmod +x "${BIN_DIR}/dewa-cleanup"
 }
 
 install_bin_backend() {

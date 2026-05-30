@@ -48,13 +48,35 @@ ui_header "DEWA DOCTOR" "Service health diagnostic"
 ui_blank
 
 # --- Port inventory -----------------------------------------
-ui_card_top "PORT INVENTORY (listening)"
+# Show DEWA's reserved ports first and prominently, then the rest.
+DEWA_RESERVED_PORTS_DISPLAY=(80 443 445 777 8880 22 109 143 444 1443)
+
+ui_card_top "RESERVED PORT OCCUPANTS"
+if command -v ss >/dev/null 2>&1; then
+    for port in "${DEWA_RESERVED_PORTS_DISPLAY[@]}"; do
+        line=$(ss -tlnp 2>/dev/null | awk -v p=":${port}\$" '$4 ~ p' | head -1)
+        if [[ -z "$line" ]]; then
+            ui_card_row "$(printf '%-7s %s' "$port" "(not bound)")"
+        else
+            owner=$(printf '%s' "$line" | grep -oE 'users:\(\("[^"]+"' | head -1 | sed 's/users:((//;s/"//g')
+            pid=$(printf '%s' "$line" | grep -oE 'pid=[0-9]+' | head -1 | cut -d= -f2)
+            laddr=$(printf '%s' "$line" | awk '{print $4}')
+            ui_card_row "$(printf '%-7s %-22s %s (pid %s)' "$port" "$laddr" "${owner:-?}" "${pid:-?}")"
+        fi
+    done
+else
+    ui_card_row "ss(8) not available — install iproute2"
+fi
+ui_card_bottom
+ui_blank
+
+ui_card_top "ALL LISTENING SOCKETS"
 if command -v ss >/dev/null 2>&1; then
     while IFS= read -r line; do
         ui_card_row "$line"
     done < <(ss -tlnp 2>/dev/null \
         | awk 'NR>1 {gsub("users:","",$0); printf "%-22s %s\n", $4, $NF}' \
-        | sort -u | head -25)
+        | sort -u | head -30)
 else
     ui_card_row "ss(8) not available — install iproute2"
 fi
@@ -72,6 +94,15 @@ for label in "${LABELS[@]}"; do
         unit="${label,,}"
     fi
     [[ -z "$unit" ]] && unit="${label,,}"
+
+    # If the unit file doesn't exist at all, label it NOT INSTALLED
+    # rather than OFFLINE so users don't think it's broken.
+    if command -v systemctl >/dev/null 2>&1 \
+       && ! systemctl list-unit-files 2>/dev/null | awk '{print $1}' | grep -qx "${unit}.service"; then
+        ui_card_status "$label" "WARNING"   # yellow dot for "not installed"
+        continue
+    fi
+
     if declare -F sys_service_status >/dev/null 2>&1; then
         state=$(sys_service_status "$unit" 2>/dev/null || echo OFFLINE)
     else

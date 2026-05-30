@@ -17,7 +17,7 @@ __RUN_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 
 # shellcheck source=common.sh
 source "${__RUN_DIR}/common.sh"
-for f in bbr ipv6 ssh dropbear stunnel nginx wsproxy xray badvpn slowdns fail2ban cert update; do
+for f in cleanup bbr ipv6 ssh dropbear stunnel nginx wsproxy xray badvpn slowdns fail2ban cert update; do
     # shellcheck disable=SC1090
     source "${__RUN_DIR}/${f}.sh"
 done
@@ -49,6 +49,10 @@ dewa_run_all_services() {
     local -a results=()
 
     inst_pkg_update
+
+    # Always run the legacy/port cleanup BEFORE installing services so
+    # nginx/stunnel/wsproxy can bind cleanly on a previously-used VPS.
+    dewa_cleanup_legacy
 
     ui_card_top "INSTALLING SERVICES"
     for entry in "${DEWA_SERVICES[@]}"; do
