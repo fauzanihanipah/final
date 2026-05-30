@@ -307,18 +307,23 @@ sys_service_unit() {
 #  show conventional defaults so the card never looks empty.
 # ------------------------------------------------------------
 __si_ports_default() {
-    # These reflect the actual ports opened by the install/ scripts.
-    # Update both sides together when changing ports.
+    # SSH_WS_TLS / VMESS_TLS / VLESS_TLS / TROJAN_TLS read from
+    # /etc/dewa-panel/tls-port if present (set by install/nginx.sh
+    # to 443 normally, 8443 if the host can't bind 443).
+    local tls_port=443
+    [[ -r /etc/dewa-panel/tls-port ]] && tls_port=$(cat /etc/dewa-panel/tls-port 2>/dev/null | tr -d '[:space:]')
+    [[ -z "$tls_port" ]] && tls_port=443
+
     case "$1" in
         SSH_TCP)      echo "22, 444" ;;
         SSH_SSL)      echo "445, 777" ;;
-        SSH_WS_TLS)   echo "443" ;;
+        SSH_WS_TLS)   echo "$tls_port" ;;
         SSH_WS_NTLS)  echo "8880" ;;
         DROPBEAR)     echo "109, 143, 1443" ;;
         BADVPN)       echo "7100, 7200, 7300" ;;
-        VMESS_TLS)    echo "443" ;;
-        VLESS_TLS)    echo "443" ;;
-        TROJAN_TLS)   echo "443" ;;
+        VMESS_TLS)    echo "$tls_port" ;;
+        VLESS_TLS)    echo "$tls_port" ;;
+        TROJAN_TLS)   echo "$tls_port" ;;
         SLOWDNS)      echo "5300" ;;
         OHP)          echo "8181" ;;
         *)            echo "-" ;;

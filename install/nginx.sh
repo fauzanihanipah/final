@@ -73,6 +73,15 @@ dewa_install_nginx() {
         || true
     [[ -f /var/www/html/index.html ]] || echo '<h1>DEWA TUNNELING PANEL</h1>' > /var/www/html/index.html
 
+    # Determine TLS port: prefer saved choice (e.g. fallback from a
+    # previous install where 443 didn't work), then env var, default 443.
+    local TLS_PORT="${DEWA_TLS_PORT:-}"
+    if [[ -z "$TLS_PORT" && -r /etc/dewa-panel/tls-port ]]; then
+        TLS_PORT=$(cat /etc/dewa-panel/tls-port 2>/dev/null | tr -d '[:space:]')
+    fi
+    [[ -z "$TLS_PORT" ]] && TLS_PORT=443
+    inst_log "TLS port chosen for this install: ${TLS_PORT}"
+
     # Build IPv6 listen directives only if IPv6 is actually enabled.
     # install/ipv6.sh disables IPv6 by default, and a 'listen [::]:443'
     # in that case will dual-stack-bind onto IPv4 and then collide with
@@ -85,7 +94,7 @@ dewa_install_nginx() {
     local listen80_v6="" listen443_v6=""
     if (( ipv6_disabled == 0 )); then
         listen80_v6="    listen [::]:80 default_server ipv6only=on;"
-        listen443_v6="    listen [::]:443 ssl http2 default_server ipv6only=on;"
+        listen443_v6="    listen [::]:${TLS_PORT} ssl http2 default_server ipv6only=on;"
     fi
 
     inst_write_file /etc/nginx/conf.d/dewa.conf 0644 <<EOF
@@ -108,9 +117,9 @@ ${listen80_v6}
     }
 }
 
-# ---------- Port 443: TLS + WebSocket reverse-proxy ----------
+# ---------- Port ${TLS_PORT}: TLS + WebSocket reverse-proxy ----------
 server {
-    listen 443 ssl http2 default_server;
+    listen ${TLS_PORT} ssl http2 default_server;
 ${listen443_v6}
     server_name _;
 
@@ -178,42 +187,67 @@ EOF
 
     local attempt pids p
     for attempt in 1 2 3 4 5; do
-        # Aggressively free port 443 — kill ANY pid holding it, regardless
-        # of process name. In a DEWA install, only nginx is supposed to own
-        # 443; anything else is a leftover from a previous panel.
-        pids=$(ss -tlnp 2>/dev/null | awk -v p=":443\$" '$4 ~ p' | grep -oE 'pid=[0-9]+' | cut -d= -f2 | sort -u)
+        pids=$(ss -tlnp 2>/dev/null | awk -v p=":${TLS_PORT}\$" '$4 ~ p' | grep -oE 'pid=[0-9]+' | cut -d= -f2 | sort -u)
         if command -v lsof >/dev/null 2>&1; then
-            pids="$pids $(lsof -ti :443 2>/dev/null)"
+            pids="$pids $(lsof -ti :${TLS_PORT} 2>/dev/null)"
         fi
         pids=$(printf '%s\n' $pids | sort -u | grep -v '^$')
         if [[ -n "$pids" ]]; then
             for p in $pids; do
-                # Skip if it's already nginx (probably us from a previous attempt)
                 [[ "$(cat "/proc/${p}/comm" 2>/dev/null)" == "nginx" ]] && continue
-                inst_log "  attempt ${attempt}: SIGKILL pid $p ($(cat "/proc/${p}/comm" 2>/dev/null)) holding port 443"
+                inst_log "  attempt ${attempt}: SIGKILL pid $p ($(cat "/proc/${p}/comm" 2>/dev/null)) holding port ${TLS_PORT}"
                 kill -KILL "$p" 2>/dev/null
             done
-            command -v fuser >/dev/null 2>&1 && fuser -k -KILL 443/tcp >/dev/null 2>&1
+            command -v fuser >/dev/null 2>&1 && fuser -k -KILL ${TLS_PORT}/tcp >/dev/null 2>&1
             sleep 2
         fi
 
         inst_run systemctl restart nginx
         sleep 1
         if systemctl is-active --quiet nginx; then
-            inst_log "  nginx ACTIVE on attempt ${attempt}"
-            inst_firewall_open 80 443
+            inst_log "  nginx ACTIVE on attempt ${attempt} (port ${TLS_PORT})"
+            mkdir -p /etc/dewa-panel
+            echo "$TLS_PORT" > /etc/dewa-panel/tls-port
+            inst_firewall_open 80 ${TLS_PORT}
             return 0
         fi
-        inst_log "  attempt ${attempt}: nginx still failing, will retry"
+        inst_log "  attempt ${attempt}: nginx still failing on port ${TLS_PORT}, will retry"
     done
 
-    # All retries exhausted — dump full diagnostics to BOTH log and stderr
-    # so the user can identify the squatter without extra digging.
-    inst_log "nginx failed to start after 5 retries — full diagnostics:"
+    # Fallback to 8443 — workaround for hosts where nginx specifically
+    # cannot bind 443 even though Python and other binaries can.
+    if [[ "$TLS_PORT" != "8443" ]]; then
+        inst_log "FALLBACK: nginx could not bind ${TLS_PORT}, switching to 8443"
+        echo
+        echo "── nginx fallback: switching TLS port ${TLS_PORT} → 8443 ──" >&2
+        TLS_PORT=8443
+        sed -i "s/listen 443 ssl/listen ${TLS_PORT} ssl/g" /etc/nginx/conf.d/dewa.conf
+        sed -i "s/listen \[::\]:443 ssl/listen [::]:${TLS_PORT} ssl/g" /etc/nginx/conf.d/dewa.conf
+        if nginx -t >/dev/null 2>&1; then
+            for attempt in 1 2 3; do
+                fuser -k -KILL ${TLS_PORT}/tcp >/dev/null 2>&1
+                sleep 1
+                inst_run systemctl restart nginx
+                sleep 1
+                if systemctl is-active --quiet nginx; then
+                    inst_log "  nginx ACTIVE at fallback port 8443"
+                    mkdir -p /etc/dewa-panel
+                    echo "8443" > /etc/dewa-panel/tls-port
+                    inst_firewall_open 80 8443
+                    if declare -F ui_notify_warning >/dev/null 2>&1; then
+                        ui_notify_warning "TLS port 443 unavailable on this host — falling back to 8443. Clients must use :8443."
+                    fi
+                    return 0
+                fi
+            done
+        fi
+    fi
+
+    inst_log "nginx failed to start at port ${TLS_PORT} after retries — full diagnostics:"
     {
-        echo "── port 443 occupants (every TCP state) ──"
-        ss -tnap 2>/dev/null | grep ':443' || echo "(none in ss)"
-        command -v lsof >/dev/null 2>&1 && lsof -i :443 2>/dev/null
+        echo "── port ${TLS_PORT} occupants (every TCP state) ──"
+        ss -tnap 2>/dev/null | grep ":${TLS_PORT}" || echo "(none in ss)"
+        command -v lsof >/dev/null 2>&1 && lsof -i :${TLS_PORT} 2>/dev/null
         echo "── systemctl status nginx ──"
         systemctl status nginx --no-pager
         echo "── journalctl -u nginx -n 20 ──"
