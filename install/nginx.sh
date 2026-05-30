@@ -45,14 +45,27 @@ dewa_install_nginx() {
     inst_selfsigned_cert "$crt" "$key" "$(hostname)"
 
     # ---- 4. Config -------------------------------------------------
-    # Wipe stock vhosts that conflict on :80 / :443.
-    [[ -f /etc/nginx/sites-enabled/default ]] && rm -f /etc/nginx/sites-enabled/default
-    [[ -f /etc/nginx/conf.d/default.conf   ]] && mv /etc/nginx/conf.d/default.conf /etc/nginx/conf.d/default.conf.dewa-disabled
-    # Some packages put a `server { listen 80 default_server; }` in
-    # /etc/nginx/nginx.conf inside the http {} block. Leave nginx.conf
-    # alone — our default_server below in conf.d will conflict with it.
-    # If that conflict happens we'll see it in `nginx -t` output and
-    # surface it to the user.
+    # Wipe ALL non-DEWA nginx vhost files. This is more aggressive than
+    # just removing /etc/nginx/sites-enabled/default — leftover configs
+    # from previous VPN panels (e.g. an old ws-stunnel proxy.conf with
+    # its own `listen 80 default_server`) would otherwise produce
+    #   "a duplicate default server for 0.0.0.0:80 in /etc/nginx/conf.d/dewa.conf:4"
+    # the moment we drop dewa.conf next to them.
+    local f
+    for f in /etc/nginx/sites-enabled/* /etc/nginx/conf.d/*.conf; do
+        [[ -e "$f" ]] || continue
+        [[ "$(basename "$f")" == "dewa.conf" ]] && continue
+        case "$f" in *.dewa-disabled) continue ;; esac
+        mv "$f" "${f}.dewa-disabled"
+        inst_log "disabled non-DEWA vhost: $f"
+    done
+    # Some packages put a `server { listen 80 default_server; }` directly
+    # inside /etc/nginx/nginx.conf — neuter that too.
+    if grep -qE 'default_server' /etc/nginx/nginx.conf 2>/dev/null; then
+        inst_backup_once /etc/nginx/nginx.conf
+        sed -i 's/default_server//g' /etc/nginx/nginx.conf
+        inst_log "stripped 'default_server' tokens from /etc/nginx/nginx.conf"
+    fi
 
     mkdir -p /var/www/html/.well-known/acme-challenge
     chown -R www-data:www-data /var/www/html 2>/dev/null \
@@ -107,14 +120,6 @@ server {
     location /       { proxy_pass http://127.0.0.1:8880;  proxy_http_version 1.1; proxy_set_header Upgrade \$http_upgrade; proxy_set_header Connection "upgrade"; proxy_set_header Host \$host; proxy_read_timeout 7d; proxy_send_timeout 7d; }
 }
 EOF
-
-    # Disable the implicit `server { listen 80 default_server; }` that
-    # ships in /etc/nginx/nginx.conf on Ubuntu (only if present), since
-    # our conf.d/dewa.conf defines its own default_server.
-    if grep -qE '^\s*default_server' /etc/nginx/nginx.conf 2>/dev/null; then
-        inst_backup_once /etc/nginx/nginx.conf
-        sed -i 's/default_server//g' /etc/nginx/nginx.conf
-    fi
 
     # ---- 5. Test config — fail loudly, on stdout AND in log ------
     if ! nginx -t >/tmp/_nginx_t.log 2>&1; then

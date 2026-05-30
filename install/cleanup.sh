@@ -11,13 +11,14 @@
 # all of them; missing units are silently ignored.
 DEWA_LEGACY_UNITS=(
     apache2 httpd lighttpd caddy
-    ssh-ws ssh-ws-noTLS ssh-ws-tls
+    ssh-ws ssh-ws-noTLS ssh-ws-tls ssh-ws-py
     ws-stunnel ws-dropbear ws-openssh
     ohp openssh-ohp openssh-https
     trojan-go trojan-server
     cloud-server vless-server vmess-server
     openvpn@server openvpn-server@server pptpd xl2tpd
     sslh stunnel stunnel4
+    runn run server-vpn vpn-server
 )
 
 # Ports our managed services need exclusive access to, with the
