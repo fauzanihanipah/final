@@ -150,20 +150,52 @@ EOF
     fi
     rm -f /tmp/_nginx_t.log
 
-    # ---- 6. Enable + start ----------------------------------------
-    inst_systemd_enable nginx
-    inst_firewall_open 80 443
+    # ---- 6. Enable + start (with retry loop for stubborn 443 hogs) ----
+    inst_run systemctl daemon-reload
+    inst_run systemctl enable nginx
 
-    if ! inst_is_active nginx; then
-        inst_log "nginx failed to start — diagnostics follow:"
-        systemctl status nginx --no-pager >> "$INSTALL_LOG" 2>&1 || true
-        journalctl -u nginx -n 50 --no-pager >> "$INSTALL_LOG" 2>&1 || true
-        # Inline last 5 journal lines to console.
-        echo
-        echo "── journalctl -u nginx (last 5) ──" >&2
-        journalctl -u nginx -n 5 --no-pager 2>&1 >&2 || true
-        echo "──────────────────────────────────" >&2
-        return 1
-    fi
-    return 0
+    local attempt pids p
+    for attempt in 1 2 3 4 5; do
+        # Aggressively free port 443 — kill ANY pid holding it, regardless
+        # of process name. In a DEWA install, only nginx is supposed to own
+        # 443; anything else is a leftover from a previous panel.
+        pids=$(ss -tlnp 2>/dev/null | awk -v p=":443\$" '$4 ~ p' | grep -oE 'pid=[0-9]+' | cut -d= -f2 | sort -u)
+        if command -v lsof >/dev/null 2>&1; then
+            pids="$pids $(lsof -ti :443 2>/dev/null)"
+        fi
+        pids=$(printf '%s\n' $pids | sort -u | grep -v '^$')
+        if [[ -n "$pids" ]]; then
+            for p in $pids; do
+                # Skip if it's already nginx (probably us from a previous attempt)
+                [[ "$(cat "/proc/${p}/comm" 2>/dev/null)" == "nginx" ]] && continue
+                inst_log "  attempt ${attempt}: SIGKILL pid $p ($(cat "/proc/${p}/comm" 2>/dev/null)) holding port 443"
+                kill -KILL "$p" 2>/dev/null
+            done
+            command -v fuser >/dev/null 2>&1 && fuser -k -KILL 443/tcp >/dev/null 2>&1
+            sleep 2
+        fi
+
+        inst_run systemctl restart nginx
+        sleep 1
+        if systemctl is-active --quiet nginx; then
+            inst_log "  nginx ACTIVE on attempt ${attempt}"
+            inst_firewall_open 80 443
+            return 0
+        fi
+        inst_log "  attempt ${attempt}: nginx still failing, will retry"
+    done
+
+    # All retries exhausted — dump full diagnostics to BOTH log and stderr
+    # so the user can identify the squatter without extra digging.
+    inst_log "nginx failed to start after 5 retries — full diagnostics:"
+    {
+        echo "── port 443 occupants (every TCP state) ──"
+        ss -tnap 2>/dev/null | grep ':443' || echo "(none in ss)"
+        command -v lsof >/dev/null 2>&1 && lsof -i :443 2>/dev/null
+        echo "── systemctl status nginx ──"
+        systemctl status nginx --no-pager
+        echo "── journalctl -u nginx -n 20 ──"
+        journalctl -u nginx -n 20 --no-pager
+    } 2>&1 | tee -a "$INSTALL_LOG" >&2
+    return 1
 }
