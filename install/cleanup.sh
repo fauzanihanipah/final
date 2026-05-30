@@ -89,6 +89,22 @@ dewa_cleanup_legacy() {
     done
 
     inst_run systemctl daemon-reload
+
+    # ---- Final fallback: fuser -k -----------------------------------
+    # If a reserved port is STILL occupied after three SIGKILL rounds,
+    # use fuser to nuke whatever still has it open (file descriptor or
+    # process). This catches systemd services with Restart=always that
+    # respawn faster than our loop.
+    if command -v fuser >/dev/null 2>&1; then
+        for port in "${!DEWA_RESERVED_PORTS[@]}"; do
+            if ss -tln 2>/dev/null | awk -v p=":${port}\$" '$4 ~ p {found=1} END{exit !found}'; then
+                inst_log "  port ${port}: fuser -k fallback"
+                fuser -k -TERM "${port}/tcp" 2>/dev/null || true
+                sleep 1
+                fuser -k -KILL "${port}/tcp" 2>/dev/null || true
+            fi
+        done
+    fi
     return 0
 }
 
