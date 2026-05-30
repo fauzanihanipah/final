@@ -17,20 +17,23 @@ __RUN_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 
 # shellcheck source=common.sh
 source "${__RUN_DIR}/common.sh"
-for f in bbr ipv6 ssh dropbear stunnel nginx xray badvpn slowdns fail2ban cert update; do
+for f in bbr ipv6 ssh dropbear stunnel nginx wsproxy xray badvpn slowdns fail2ban cert update; do
     # shellcheck disable=SC1090
     source "${__RUN_DIR}/${f}.sh"
 done
 
 # Service registry: "Display Name|systemd unit|installer function"
+# Order matters — services that LISTEN must come before services that
+# CONNECT to them (e.g. dropbear before stunnel, dropbear before wsproxy).
 DEWA_SERVICES=(
     "BBR              |${__SENTINEL_NONE:-}|dewa_install_bbr"
     "DISABLE IPv6     |${__SENTINEL_NONE:-}|dewa_install_ipv6_disable"
     "SSH              |$(inst_ssh_unit)|dewa_install_ssh"
     "DROPBEAR         |dropbear|dewa_install_dropbear"
-    "STUNNEL          |$(inst_stunnel_unit)|dewa_install_stunnel"
+    "STUNNEL          |dewa-stunnel|dewa_install_stunnel"
     "XRAY             |xray|dewa_install_xray"
     "NGINX            |nginx|dewa_install_nginx"
+    "WS-SSH BRIDGE    |ws-ssh|dewa_install_wsproxy"
     "BADVPN           |badvpn|dewa_install_badvpn"
     "FAIL2BAN         |fail2ban|dewa_install_fail2ban"
     "SLOWDNS          |slowdns|dewa_install_slowdns"
@@ -82,9 +85,20 @@ dewa_run_all_services() {
         esac
         results+=("${state_color}${icon}${RESET} ${name} ${state_color}${state}${RESET}")
 
-        # Update progress in the resource section below.
-        percent=$(( idx * 100 / total ))
-        printf '\033[s'        # save cursor
+        # If the service ended up OFFLINE, dump diagnostics LIVE so the
+        # user sees the real reason without having to tail a log file.
+        if [[ "$state" == OFFLINE && -n "$unit" ]] && command -v systemctl >/dev/null 2>&1; then
+            ui_card_row "${C_GRAY}    └─ diagnostic for ${unit}:${RESET}"
+            local jline status
+            status=$(systemctl is-active "$unit" 2>&1 | head -1)
+            ui_card_row "${C_GRAY}       active : ${status}${RESET}"
+            while IFS= read -r jline; do
+                # Strip non-printable junk and any leading hostname so the
+                # line fits inside the card.
+                jline=$(printf '%s' "$jline" | tr -d '\r' | sed -E 's/^[A-Za-z]{3} [0-9]{2} [0-9:]+ [^ ]+ //' | cut -c1-60)
+                ui_card_row "${C_GRAY}       ${jline}${RESET}"
+            done < <(journalctl -u "$unit" -n 4 --no-pager 2>/dev/null | tail -4)
+        fi
     done
     ui_card_bottom
 

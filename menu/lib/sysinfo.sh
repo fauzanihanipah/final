@@ -280,9 +280,12 @@ sys_service_unit() {
             ;;
         DROPBEAR)  echo dropbear ;;
         STUNNEL5)
-            # The installer creates an alias unit 'stunnel5.service'; if it's
-            # missing fall back to the distro's actual unit name.
-            if systemctl list-unit-files 2>/dev/null | grep -q '^stunnel5\.service'; then
+            # The installer ships a 'dewa-stunnel.service' (preferred);
+            # 'stunnel5' is kept as a compat alias. Fall back to the distro
+            # unit names if neither is installed yet.
+            if systemctl list-unit-files 2>/dev/null | grep -q '^dewa-stunnel\.service'; then
+                echo dewa-stunnel
+            elif systemctl list-unit-files 2>/dev/null | grep -q '^stunnel5\.service'; then
                 echo stunnel5
             elif systemctl list-unit-files 2>/dev/null | grep -q '^stunnel4\.service'; then
                 echo stunnel4
@@ -304,9 +307,11 @@ sys_service_unit() {
 #  show conventional defaults so the card never looks empty.
 # ------------------------------------------------------------
 __si_ports_default() {
+    # These reflect the actual ports opened by the install/ scripts.
+    # Update both sides together when changing ports.
     case "$1" in
-        SSH_TCP)      echo "22, 443" ;;
-        SSH_SSL)      echo "443" ;;
+        SSH_TCP)      echo "22, 444" ;;
+        SSH_SSL)      echo "445, 777" ;;
         SSH_WS_TLS)   echo "443" ;;
         SSH_WS_NTLS)  echo "8880" ;;
         DROPBEAR)     echo "109, 143, 1443" ;;
