@@ -73,12 +73,27 @@ dewa_install_nginx() {
         || true
     [[ -f /var/www/html/index.html ]] || echo '<h1>DEWA TUNNELING PANEL</h1>' > /var/www/html/index.html
 
+    # Build IPv6 listen directives only if IPv6 is actually enabled.
+    # install/ipv6.sh disables IPv6 by default, and a 'listen [::]:443'
+    # in that case will dual-stack-bind onto IPv4 and then collide with
+    # the explicit 'listen 0.0.0.0:443' on the next line, producing the
+    # infamous "bind() to 0.0.0.0:443 failed (98: ...)" loop.
+    local ipv6_disabled=1
+    if [[ "$(sysctl -n net.ipv6.conf.all.disable_ipv6 2>/dev/null || echo 1)" != "1" ]]; then
+        ipv6_disabled=0
+    fi
+    local listen80_v6="" listen443_v6=""
+    if (( ipv6_disabled == 0 )); then
+        listen80_v6="    listen [::]:80 default_server ipv6only=on;"
+        listen443_v6="    listen [::]:443 ssl http2 default_server ipv6only=on;"
+    fi
+
     inst_write_file /etc/nginx/conf.d/dewa.conf 0644 <<EOF
 # Managed by DEWA TUNNELING PANEL
 # ---------- Port 80: ACME validation + default landing ----------
 server {
     listen 80 default_server;
-    listen [::]:80 default_server;
+${listen80_v6}
     server_name _;
     root /var/www/html;
     index index.html;
@@ -96,7 +111,7 @@ server {
 # ---------- Port 443: TLS + WebSocket reverse-proxy ----------
 server {
     listen 443 ssl http2 default_server;
-    listen [::]:443 ssl http2 default_server;
+${listen443_v6}
     server_name _;
 
     ssl_certificate     ${crt};
